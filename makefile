@@ -2,7 +2,7 @@ CC = clang
 CPP = clang++
 COPT = -Wall -O2
 
-all: dfs-test-qsort.exe dfs-test-stdsort.exe dfs-test-stdsortr.exe dfs-test-mergesort.exe
+all: dfs-test-qsort.exe dfs-test-stdsort.exe dfs-test-stdsortr.exe dfs-test-mergesort.exe dfs-test-mergesortr.exe
 
 dfs-main.o: dfs-main.cpp dfs-sort.h
 	${CPP} ${COPT} -c $<
@@ -29,5 +29,11 @@ dfs-mergesort.o: dfs-mergesort.c dfs-sort.h
 	${CC} ${COPT} -c $<
 
 dfs-test-mergesort.exe : dfs-main.o dfs-mergesort.o
+	${CPP} $+ -o $@
+
+dfs-mergesortr.o: dfs-mergesortr.c dfs-sort.h
+	${CC} ${COPT} -c $<
+
+dfs-test-mergesortr.exe : dfs-main.o dfs-mergesortr.o
 	${CPP} $+ -o $@
 
