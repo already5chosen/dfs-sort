@@ -59,26 +59,7 @@ int dfs_sort(const char* x[], size_t nElem)
   for (uint32_t i = 0; i < (uint32_t)nElem; ++i)
     y[i] = ((uint64_t)load4(x[i]) << 32) | i;
 
-  // sort by 4 MS characters
-  uint64_t* wrk = wrkbuf + nElem;
-  merge_sort_u64(y, nElem, wrk);
-
-  // sort sub-sections that have identical prefix
-  const uint64_t VAL_MSK = (uint64_t)(-1) << 32;
-  uint64_t valLast = y[nElem-1] & VAL_MSK;
-  for (uint32_t i0 = 0; i0 != (uint32_t)nElem;) {
-    uint64_t val0 = y[i0] & VAL_MSK;
-    uint32_t i1 = nElem;
-    if (val0 != valLast) {
-      i1 = i0 + 1;
-      while ((y[i1] & VAL_MSK) == val0) ++i1;
-    }
-    if (i1 - i0 > 1 && (uint8_t)(val0 >> 32) != 0)
-      recursive_sort(&y[i0], i1 - i0, wrk, x, 4);
-    for (uint32_t k = i0; k < i1; ++k)
-      y[k] = (uint64_t)x[(uint32_t)y[k]];
-    i0 = i1;
-  }
+  recursive_sort(y, nElem, wrkbuf + nElem, x, 0);
 
   for (uint32_t i = 0; i < (uint32_t)nElem; ++i)
     x[i] = (const char*)(y[i]);
@@ -164,26 +145,29 @@ static void merge_u64(uint64_t dst[], uint64_t src1[], size_t len1, uint64_t src
 
 static void recursive_sort(uint64_t y[], uint32_t nElem, uint64_t wrk[], const char* x[], unsigned offs)
 {
-  const uint64_t VAL_MSK = (uint64_t)(-1) << 32;
-  const uint64_t IX_MSK  = (uint64_t)(-1) >> 32;
-
-  for (uint32_t i = 0; i < nElem; ++i) {
-    uint32_t ix = y[i] & IX_MSK;
-    y[i] = ((uint64_t)load4(x[ix]+offs) << 32) | ix;
-  }
-
+  // sort by 4 MS characters
   merge_sort_u64(y, nElem, wrk);
-
-  uint32_t i0 = 0;
-  uint64_t val0 = y[0] & VAL_MSK;
-  for (uint32_t i = 0; i < nElem; ++i) {
-    if ((y[i] & VAL_MSK) != val0) {
-      if (i - i0 > 1 && (uint8_t)(val0 >> 32) != 0)
-        recursive_sort(&y[i0], i - i0, wrk, x, offs+4);
-      val0 = y[i] & VAL_MSK;
-      i0 = i;
+  // sort sub-sections that have identical prefix
+  const uint64_t IX_MSK  = (uint64_t)(-1) >> 32;
+  const uint64_t VAL_MSK = (uint64_t)(-1) << 32;
+  uint64_t valLast = y[nElem-1] & VAL_MSK;
+  for (uint32_t i0 = 0; i0 != nElem;) {
+    uint64_t val0 = y[i0] & VAL_MSK;
+    uint32_t i1 = nElem;
+    if (val0 != valLast) {
+      i1 = i0 + 1;
+      while ((y[i1] & VAL_MSK) == val0) ++i1;
     }
+    if (i1 - i0 > 1 && (uint8_t)(val0 >> 32) != 0) {
+      for (uint32_t i = i0; i < i1; ++i) {
+        uint32_t ix = y[i] & IX_MSK;
+        y[i] = ((uint64_t)load4(x[ix]+offs+4) << 32) | ix;
+      }
+      recursive_sort(&y[i0], i1 - i0, wrk, x, offs+4);
+    } else {
+      for (uint32_t k = i0; k < i1; ++k)
+        y[k] = (uint64_t)x[(uint32_t)y[k]];
+    }
+    i0 = i1;
   }
-  if (nElem - i0 > 1 && (uint8_t)(val0 >> 32) != 0)
-    recursive_sort(&y[i0], nElem - i0, wrk, x, offs+4);
 }
