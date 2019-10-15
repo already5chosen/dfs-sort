@@ -9,6 +9,7 @@ ALLEXE += dfs-test-mergesort.exe
 ALLEXE += dfs-test-mergesortr.exe
 ALLEXE += dfs-test-radix4sort.exe
 ALLEXE += dfs-test-radix2sort.exe
+ALLEXE += dfs-test-radix1sort.exe
 
 all: ${ALLEXE}
 
@@ -55,5 +56,11 @@ dfs-radix2sort.o: dfs-radix2sort.c dfs-sort.h
 	${CC} ${COPT} -c $<
 
 dfs-test-radix2sort.exe : dfs-main.o dfs-radix2sort.o
+	${CPP} $+ -o $@
+
+dfs-radix1sort.o: dfs-radix1sort.c dfs-sort.h
+	${CC} ${COPT} -c $<
+
+dfs-test-radix1sort.exe : dfs-main.o dfs-radix1sort.o
 	${CPP} $+ -o $@
 
