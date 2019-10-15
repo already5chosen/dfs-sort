@@ -147,13 +147,16 @@ static void radix2_sort(uint64_t buf[], size_t nElem, uint64_t wrk[], int lsw)
 
 static void recursive_sort(uint64_t y[], uint32_t nElem, uint64_t wrk[], const char* x[], unsigned offs)
 {
-  // sort by 4 MS characters
+  // sort by 2 or 4 MS characters
   radix2_sort(y, nElem, wrk, offs & 2);
+  const unsigned offsStep = (offs & 2) || (nElem >= MIN_RADIXSORT_LEN) ? 2 : 4;
+  const unsigned ySorted  = (offs & 2) || (offsStep == 4); // all 4 loaded characters are sorted
   // sort sub-sections that have identical prefix
   const uint64_t IX_MSK  = (uint64_t)(-1) >> 32;
-  const uint64_t VAL_MSK = offs & 2 ? (uint64_t)(0xFFFF) << 32 : (uint64_t)(0xFFFF) << 48;
-  const uint64_t LSB_MSK = offs & 2 ? (uint64_t)(0x00FF) << 32 : (uint64_t)(0x00FF) << 48;
+  const uint64_t VAL_MSK = ySorted ? (uint64_t)(-1)     << 32 : (uint64_t)(0xFFFF) << 48;
+  const uint64_t LSB_MSK = ySorted ? (uint64_t)(0x00FF) << 32 : (uint64_t)(0x00FF) << 48;
   uint64_t valLast = y[nElem-1] & VAL_MSK;
+  offs += offsStep;
   for (uint32_t i0 = 0; i0 != nElem;) {
     uint64_t val0 = y[i0] & VAL_MSK;
     uint32_t i1 = nElem;
@@ -162,14 +165,14 @@ static void recursive_sort(uint64_t y[], uint32_t nElem, uint64_t wrk[], const c
       while ((y[i1] & VAL_MSK) == val0) ++i1;
     }
     if (i1 - i0 > 1 && (val0 & LSB_MSK) != 0) {
-      if (offs & 2) {
+      if (ySorted) {
         // load 4 more characters
         for (uint32_t i = i0; i < i1; ++i) {
           uint32_t ix = y[i] & IX_MSK;
-          y[i] = ((uint64_t)load4(x[ix]+offs+2) << 32) | ix;
+          y[i] = ((uint64_t)load4(x[ix]+offs) << 32) | ix;
         }
       }
-      recursive_sort(&y[i0], i1 - i0, wrk, x, offs+2);
+      recursive_sort(&y[i0], i1 - i0, wrk, x, offs);
     } else {
       for (uint32_t i = i0; i < i1; ++i) {
         uint32_t ix = y[i] & IX_MSK;
