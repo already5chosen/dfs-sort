@@ -53,8 +53,6 @@ Recursive radix sort 'MS digit first' with individual characters as digits.
 Very short sections are sorted by straight insertion sort.
 The data is preprocessed during copy to temporary buffers - converted to lower case in chunks of 4 characters.
 Comparison function: N/A. The sorting is based on counting rather than comparison.
-This function is not yet optimized for maximal possible performance. In particular, it does many copy operations
-that could be avoided with slightly more complex housekeeping.
 
 Speed on my test case (~10M words taken from classic English-language novels):
 
@@ -65,4 +63,4 @@ dfs-test-stdsortr.exe   : 1.624570 s
 dfs-test-mergesortr.exe : 1.765105 s
 dfs-test-radix4sort.exe : 0.850378 s
 dfs-test-radix2sort.exe : 0.846078 s
-dfs-test-radix1sort.exe : 0.882004 s
+dfs-test-radix1sort.exe : 0.845669 s
