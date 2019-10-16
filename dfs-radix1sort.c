@@ -148,57 +148,96 @@ static void recursive_sort_from_x(uint64_t src[], uint32_t nElem, const char* re
 
 static void recursive_sort_short(uint64_t* restrict y, uint32_t nElem, const char* restrict x[], unsigned offs)
 {
-  recursive_sort_load4(y, nElem, x, offs);
-  // sort by 4 characters
-  short_section_sort_u64(y, nElem);
-  offs += 4 - (offs & 3); // next 4-character element
+  for (;;) {
+    recursive_sort_load4(y, nElem, x, offs);
+    // sort by 4 characters
+    short_section_sort_u64(y, nElem);
+    offs += 4 - (offs & 3); // next 4-character element
 
-  // sort sub-sections that have identical prefix
-  const uint64_t VAL_MSK = (uint64_t)(-1)   << 32;
-  const uint64_t LSB_MSK = (uint64_t)(0xFF) << 32;
-  uint64_t valLast = y[nElem-1] & VAL_MSK;
-  for (uint32_t i0 = 0; i0 != nElem;) {
-    uint64_t val0 = y[i0] & VAL_MSK;
-    uint32_t i1 = nElem;
-    if (val0 != valLast) {
-      i1 = i0 + 1;
-      while ((y[i1] & VAL_MSK) == val0) ++i1;
+    // sort sub-sections that have identical prefix
+    const uint64_t VAL_MSK = (uint64_t)(-1)   << 32;
+    const uint64_t LSB_MSK = (uint64_t)(0xFF) << 32;
+    uint64_t valLast = y[nElem-1] & VAL_MSK;
+    const uint32_t hnElem = nElem /2;
+    uint32_t big_i0 = 0;
+    uint32_t big_len = 0;
+    for (uint32_t i0 = 0; i0 != nElem;) {
+      uint64_t val0 = y[i0] & VAL_MSK;
+      uint32_t i1 = nElem;
+      if (val0 != valLast) {
+        i1 = i0 + 1;
+        while ((y[i1] & VAL_MSK) == val0) ++i1;
+      }
+      uint32_t len = i1 - i0;
+      if (len > 1 && (val0 & LSB_MSK) != 0) { // sort by next characters
+        if (len <= hnElem)
+          recursive_sort_short(&y[i0], len, x, offs);
+        else { // don't process very big sections here
+          big_i0  = i0;
+          big_len = len;
+        }
+      }
+      i0 = i1;
     }
-    if (i1 - i0 > 1 && (val0 & LSB_MSK) != 0)  // sort by next characters
-      recursive_sort_short(&y[i0], i1 - i0, x, offs);
-    i0 = i1;
+    if (big_len == 0)
+      break;
+
+    // Handle very big sections in non-recursive manner
+    // It's done in order to limit a maximal recursion depth to ceil(log2(nElem))
+    y += big_i0;
+    nElem = big_len;
   }
 }
 
 static void recursive_sort(uint64_t* restrict y, uint32_t nElem, const char* restrict x[], unsigned offs, uint64_t* restrict wrk)
 {
-  uint64_t* src = (offs & 1)==0 ? y   : wrk;
-  uint64_t* dst = (offs & 1)==0 ? wrk : y;
-  if (nElem < MIN_RADIXSORT_LEN) {
-    recursive_sort_short(src,  nElem, x, offs);
-    recursive_sort_from_x(src, nElem, x, y);
-    return;
-  }
-
-  recursive_sort_load4(y, nElem, x, offs);
-
-  // sort by 1 character
-  uint32_t h[256] = {0};
-  radix_sort(src, nElem, offs & 3, dst, h);
-  offs += 1;
-
-  // sort sub-sections that have identical prefix
-  if (h[0] > 0) // the section 0 is fully sorted, replace with sorted original vector
-    recursive_sort_from_x(dst, h[0], x, y);
-
-  for (unsigned ci = 0; h[ci] != nElem; ++ci) {
-    uint32_t i0 = h[ci];
-    uint32_t i1 = h[ci+1];
-    if (i0 != i1) {
-      if (i1 - i0 > 1)  // sort by next characters
-        recursive_sort(&y[i0], i1 - i0, x, offs, &wrk[i0]);
-      else // the section is fully sorted, replace with sorted original vector
-        recursive_sort_from_x(&dst[i0], i1 - i0, x, &y[i0]);
+  for (;;) {
+    uint64_t* src = (offs & 1)==0 ? y   : wrk;
+    uint64_t* dst = (offs & 1)==0 ? wrk : y;
+    if (nElem < MIN_RADIXSORT_LEN) {
+      recursive_sort_short(src,  nElem, x, offs);
+      recursive_sort_from_x(src, nElem, x, y);
+      break;
     }
+
+    recursive_sort_load4(y, nElem, x, offs);
+
+    // sort by 1 character
+    uint32_t h[256] = {0};
+    radix_sort(src, nElem, offs & 3, dst, h);
+    offs += 1;
+
+    // sort sub-sections that have identical prefix
+    if (h[0] > 0) // the section 0 is fully sorted, replace with sorted original vector
+      recursive_sort_from_x(dst, h[0], x, y);
+
+    const uint32_t hnElem = nElem /2;
+    const uint64_t IX_MSK  = (uint64_t)(-1) >> 32;
+    unsigned big_ci = 0;
+    for (unsigned ci = 0; h[ci] != nElem; ++ci) {
+      uint32_t i0 = h[ci];
+      uint32_t len = h[ci+1] - i0;
+      if (len != 0) {
+        if (len > 1) {
+          // sort by next characters
+          if (len <= hnElem)
+            recursive_sort(&y[i0], len, x, offs, &wrk[i0]);
+          else
+            big_ci = ci+1; // don't process very big sections here
+        } else { // the section is fully sorted, replace with sorted original vector
+          y[i0] = (uint64_t)x[dst[i0] & IX_MSK];
+        }
+      }
+    }
+
+    if (big_ci == 0)
+      break;
+
+    // Handle very big sections in non-recursive manner
+    // It's done in order to limit a maximal recursion depth to ceil(log2(nElem))
+    uint32_t i0 = h[big_ci-1];
+    y   += i0;
+    wrk += i0;
+    nElem = h[big_ci] - i0;
   }
 }
