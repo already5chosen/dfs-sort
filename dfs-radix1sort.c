@@ -12,9 +12,7 @@ enum {
   MIN_RADIXSORT_LEN = 42,
 };
 
-static void short_section_sort_u64(uint64_t buf[], unsigned nElem);
-static void radix_sort(uint64_t buf[], size_t nElem, uint64_t wrk[], int lsw);
-static void recursive_sort(uint64_t y[], uint32_t nElem, uint64_t wrk[], const char* x[], unsigned offs);
+static void recursive_sort(uint64_t y[], uint32_t nElem, const char* x[], unsigned offs, uint64_t wrk[]);
 
 static inline uint32_t load4(const char* str) {
   int c0 = str[0], c1=0, c2=0, c3 = 0;
@@ -53,10 +51,7 @@ int dfs_sort(const char* x[], size_t nElem)
     return 0; // fail
 
   uint64_t* y = wrkbuf;
-  for (uint32_t i = 0; i < (uint32_t)nElem; ++i)
-    y[i] = ((uint64_t)load4(x[i]) << 32) | i;
-
-  recursive_sort(y, nElem, wrkbuf + nElem, x, 0);
+  recursive_sort(y, nElem, x, 0, wrkbuf + nElem);
 
   for (uint32_t i = 0; i < (uint32_t)nElem; ++i)
     x[i] = (const char*)(y[i]);
@@ -97,16 +92,10 @@ static void short_section_sort_u64(uint64_t buf[], unsigned nElem)
 // when lsw == 1 - sort by bits [55:48]
 // when lsw == 2 - sort by bits [47:40]
 // when lsw == 3 - sort by bits [39:32]
-static void radix_sort(uint64_t buf[], size_t nElem, uint64_t wrk[], int lsw)
+static void radix_sort(uint64_t buf[], size_t nElem, int lsw, uint64_t wrk[], uint32_t h[256])
 {
-  if (nElem < MIN_RADIXSORT_LEN) {
-    short_section_sort_u64(buf, nElem);
-    return;
-  }
-
   // calculate histograms and copy buf to wrk
   int sh = (7 - lsw)*8;
-  uint32_t h[256] = {0};
   for (uint32_t i = 0; i != nElem; ++i) {
     uint64_t x = buf[i];
     ++h[(x >> sh) & 0xFF];
@@ -115,7 +104,7 @@ static void radix_sort(uint64_t buf[], size_t nElem, uint64_t wrk[], int lsw)
 
   // integrate histogram
   uint32_t acc = 0;
-  for (unsigned i = 0; i < 256; ++i) {
+  for (unsigned i = 0; acc != nElem; ++i) {
     uint32_t hval = h[i];
     h[i] = acc;
     acc += hval;
@@ -131,17 +120,43 @@ static void radix_sort(uint64_t buf[], size_t nElem, uint64_t wrk[], int lsw)
   }
 }
 
-static void recursive_sort(uint64_t y[], uint32_t nElem, uint64_t wrk[], const char* x[], unsigned offs)
+static void recursive_sort_load4(uint64_t y[], uint32_t nElem, const char* x[], unsigned offs)
 {
-  // sort by 1 or 4 characters
-  radix_sort(y, nElem, wrk, offs & 3);
-  const unsigned offsStep = nElem >= MIN_RADIXSORT_LEN ? 1 : 4 - (offs & 3); // 1 to 4
-  offs += offsStep;
-  // sort sub-sections that have identical prefix
   const uint64_t IX_MSK  = (uint64_t)(-1) >> 32;
-  const unsigned LSB_I = (offs + 3) % 4;
-  const uint64_t VAL_MSK = (uint64_t)(-1)   << ((7-LSB_I)*8);
-  const uint64_t LSB_MSK = (uint64_t)(0xFF) << ((7-LSB_I)*8);
+  if ((offs & 3)==0) {
+    // all 4 loaded characters are sorted, load next portion
+    if (offs == 0) {
+      for (uint32_t i = 0; i < nElem; ++i) {
+        y[i] = ((uint64_t)load4(x[i]) << 32) | i;
+      }
+    } else {
+      for (uint32_t i = 0; i < nElem; ++i) {
+        uint32_t ix = y[i] & IX_MSK;
+        y[i] = ((uint64_t)load4(x[ix]+offs) << 32) | ix;
+      }
+    }
+  }
+}
+
+static void recursive_sort_from_x(uint64_t y[], uint32_t nElem, const char* x[])
+{ // replace fully sorted with sorted original vector
+  const uint64_t IX_MSK  = (uint64_t)(-1) >> 32;
+  for (uint32_t i = 0; i < nElem; ++i) {
+    uint32_t ix = y[i] & IX_MSK;
+    y[i] = (uint64_t)x[ix];
+  }
+}
+
+static void recursive_sort_short(uint64_t y[], uint32_t nElem, const char* x[], unsigned offs)
+{
+  recursive_sort_load4(y, nElem, x, offs);
+  // sort by 4 characters
+  short_section_sort_u64(y, nElem);
+  offs += 4 - (offs & 3); // next 4-character element
+
+  // sort sub-sections that have identical prefix
+  const uint64_t VAL_MSK = (uint64_t)(-1)   << 32;
+  const uint64_t LSB_MSK = (uint64_t)(0xFF) << 32;
   uint64_t valLast = y[nElem-1] & VAL_MSK;
   for (uint32_t i0 = 0; i0 != nElem;) {
     uint64_t val0 = y[i0] & VAL_MSK;
@@ -150,21 +165,40 @@ static void recursive_sort(uint64_t y[], uint32_t nElem, uint64_t wrk[], const c
       i1 = i0 + 1;
       while ((y[i1] & VAL_MSK) == val0) ++i1;
     }
-    if (i1 - i0 > 1 && (val0 & LSB_MSK) != 0) {
-      if ((offs & 3)==0) { // all 4 loaded characters are sorted
-        // load 4 more characters
-        for (uint32_t i = i0; i < i1; ++i) {
-          uint32_t ix = y[i] & IX_MSK;
-          y[i] = ((uint64_t)load4(x[ix]+offs) << 32) | ix;
-        }
-      }
-      recursive_sort(&y[i0], i1 - i0, wrk, x, offs);
-    } else {
-      for (uint32_t i = i0; i < i1; ++i) {
-        uint32_t ix = y[i] & IX_MSK;
-        y[i] = (uint64_t)x[ix];
-      }
-    }
+    if (i1 - i0 > 1 && (val0 & LSB_MSK) != 0)  // sort by next characters
+      recursive_sort_short(&y[i0], i1 - i0, x, offs);
+    else // the section is fully sorted, replace with sorted original vector
+      recursive_sort_from_x(&y[i0], i1 - i0, x);
     i0 = i1;
+  }
+}
+
+static void recursive_sort(uint64_t y[], uint32_t nElem, const char* x[], unsigned offs, uint64_t wrk[])
+{
+  if (nElem < MIN_RADIXSORT_LEN) {
+    recursive_sort_short(y, nElem, x, offs);
+    return;
+  }
+
+  recursive_sort_load4(y, nElem, x, offs);
+
+  // sort by 1 character
+  uint32_t h[256] = {0};
+  radix_sort(y, nElem, offs & 3, wrk, h);
+  offs += 1;
+
+  // sort sub-sections that have identical prefix
+  if (h[0] > 0) // the section 0 is fully sorted, replace with sorted original vector
+    recursive_sort_from_x(y, h[0], x);
+
+  for (unsigned ci = 0; h[ci] != nElem; ++ci) {
+    uint32_t i0 = h[ci];
+    uint32_t i1 = h[ci+1];
+    if (i0 != i1) {
+      if (i1 - i0 > 1)  // sort by next characters
+        recursive_sort(&y[i0], i1 - i0, x, offs, wrk);
+      else // the section is fully sorted, replace with sorted original vector
+        recursive_sort_from_x(&y[i0], i1 - i0, x);
+    }
   }
 }
